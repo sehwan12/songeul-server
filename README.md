@@ -1,117 +1,83 @@
-# 손글손글
+# 손글손글 · 평가 서버
 
-AI를 활용하여 사용자의 한글 손글씨를 정밀하게 평가하고, 맞춤형 학습 콘텐츠를 생성하는 손글손글의 서버/인프라/모델 관련 리포지토리입니다.
+손글손글 앱에서 보낸 글씨 이미지와 획 좌표를 받아 점수와 피드백을 돌려주는 FastAPI 서버입니다. 로그인과 학습 기록 조회를 처리하며, 자유 연습에 쓸 글자·단어·문장은 Gemini로 생성합니다.
 
-## 🚀 주요 기능
-- **손글씨 평가:** EasyOCR 기반 텍스트 인식 및 획순/자모음 정확도 채점 알고리즘
-- **맞춤 피드백:** 사용자 유형과 손글씨 평가 기록에 맞는 맞춤형 피드백 제공
-- **콘텐츠 생성:** Google Gemini API를 연동한 무한 연습 문장 생성
-- **학습 관리:** 사용자별 학습 통계 및 미션 기록 조회
-- **인증:** Firebase Auth & JWT 기반 보안
+앱 화면과 필기 입력 코드는 [Flutter 저장소](https://github.com/AI-WritingCorrection/writingCorrection_flutter)에 있습니다. 시연 영상과 APK도 그곳에서 볼 수 있습니다.
 
-## 🛠 기술 스택
-- **Framework:** FastAPI
-- **AI:** EasyOCR, PyTorch, Gemini API
-- **DB:** PostgreSQL, SQLAlchemy, Alembic
-- **Infra:** Docker, Nginx, AWS EC2
+## 로컬에서 실행
 
-## ⚙️ 실행 가이드
+Python 3.10과 Docker Compose가 필요합니다. 현재 [`docker-compose.yml`](docker-compose.yml)은 PostgreSQL만 실행합니다. FastAPI는 호스트에서 따로 실행합니다.
 
-### 1. 환경 변수 설정
-프로젝트 루트에 `.env` 파일을 생성하고 다음 정보를 입력하세요. (참고: `.env.example`)
-```ini
-DATABASE_URL=postgresql://user:password@db:5432/dbname
-GEMINI_API_KEY=your_gemini_api_key
-JWT_SECRET_KEY=your_secret_key
-# 추가적인 환경 변수들... (Firebase 설정, STATIC_PROFILE_DIR, PUBLIC_BASE_URL 등)
+먼저 환경 파일을 만듭니다.
+
+```sh
+cp .env.example .env
 ```
 
-### 2. Docker로 실행 (권장)
-```bash
-docker-compose up -d --build
+`.env`의 PostgreSQL 설정은 아래 예시를 참고합니다. 포트 `5435`는 Compose가 호스트에 공개하는 포트입니다.
+
+```dotenv
+POSTGRES_USER=writing
+POSTGRES_PASSWORD=local_dev_password
+POSTGRES_DB=correction
+DATABASE_URL=postgresql://writing:local_dev_password@localhost:5435/correction
+STATIC_PROFILE_DIR=./static/profile
+PUBLIC_BASE_URL=http://localhost:8000
 ```
 
-### 3. 로컬 개발 환경 실행
-```bash
-pip install -r requirements.txt
-uvicorn main:app --reload
+- `JWT_SECRET_KEY`에는 개발용 키를 설정하고, `JWT_ALGORITHM`과 `JWT_ACCESS_EXPIRE_MINUTES`는 [`.env.example`](.env.example)을 참고합니다.
+- Firebase 로그인을 사용하려면 Flutter 앱과 같은 Firebase 프로젝트의 서비스 계정 파일을 서버 루트에 `serviceAccountKey.json`으로 둡니다. 현 코드는 [`firebase.py`](firebase.py)에서 이 파일을 읽습니다.
+- 연습 문장 생성을 사용하려면 `GEMINI_API_KEY`를 설정합니다.
+
+```sh
+docker compose up -d db
+python3.10 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+mkdir -p static/profile
+alembic upgrade head
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-## 📚 API 문서
-서버 실행 후 다음 주소에서 Swagger UI를 확인할 수 있습니다.
-- [http://localhost:8000/docs](http://localhost:8000/docs) (로컬 환경)
-- [https://Your-Server-IP-or-Domain/docs](https://<Your-Server-IP-or-Domain>/docs) (배포 환경)
+실행 후 [Swagger UI](http://localhost:8000/docs)에서 요청과 응답 형식을 확인할 수 있습니다. 첫 평가 요청에서는 EasyOCR 가중치를 내려받느라 시간이 걸릴 수 있습니다.
 
-## 🧪 성능 테스트 결과 (Locust)
+## API
 
-최근 32명의 가상 사용자를 대상으로 Locust를 활용한 부하 테스트를 수행했습니다.
+| 경로 | 역할 |
+| --- | --- |
+| `POST /api/step/evaluate` | 필기 이미지와 획 좌표 평가 |
+| `POST /api/auth/login`, `POST /api/auth/signup` | Firebase 인증 결과를 바탕으로 로그인·가입 처리 |
+| `GET /api/data/step`, `GET /api/data/practice` | 학습 단계와 연습 데이터 조회 |
+| `GET /api/data/missionrecords/{user_id}`, `GET /api/user/stats/{user_id}` | 미션 기록과 점수 통계 조회 |
+| `POST /api/text/generate` | 연습용 글자·단어·문장 생성 |
 
-### 주요 결과 요약
--   **RPS (초당 요청 처리량):** 32명 사용자 환경에서 약 13~15 RPS를 기록했습니다. 이는 16명 사용자 환경 대비 약 2배 증가한 수치로, 서버가 부하에 비례하여 처리량을 증가시키고 있음을 보여줍니다.
--   **Failures (실패율):** 0건. 모든 요청이 성공적으로 처리되었습니다.
--   **Response Time (응답 시간):**
-    *   **안정화 구간:** 95th percentile 응답 시간이 1,000ms ~ 1,500ms (1.5초) 사이에서 안정적으로 유지되고 있습니다.
+## 손글씨를 평가하는 방식
 
----
+| 순서 | 보는 항목 | 확인하는 내용 |
+| --- | --- | --- |
+| 1 | 가독성 | EasyOCR로 읽은 글자를 목표 글자와 비교합니다. 글자가 다르면 후보와 초성·중성·종성의 일치 여부를 확인합니다. |
+| 2 | 글자 전체 비율 | 획이 차지하는 영역을 필기 칸과 비교해 글자 크기와 가로·세로 비율을 확인합니다. |
+| 3 | 획순과 방향 | 입력한 획의 순서와 시작·끝 좌표를 자모별 규칙과 비교합니다. |
+| 4 | 자모 비율 | 글자 전체에서 각 자모가 차지하는 길이와 면적을 기준값과 비교합니다. |
 
-## ✍️ 손글씨 평가 알고리즘 (Handwriting Evaluation Algorithm)
+## 코드 구조
 
-본 애플리케이션의 핵심인 손글씨 평가 알고리즘은 크게 4단계로 구성됩니다. 각 단계는 사용자의 글쓰기 문제점을 다양한 각도에서 분석하고 맞춤형 피드백을 제공합니다.
+| 경로 | 역할 |
+| --- | --- |
+| [`main.py`](main.py), [`controller/`](controller/) | FastAPI 앱과 API 라우터 |
+| [`service/`](service/), [`aiModel/`](aiModel/) | 평가 로직과 OCR 모델 |
+| [`domain/`](domain/), [`dto/`](dto/) | DB 모델과 API 요청·응답 형식 |
+| [`alembic/`](alembic/) | PostgreSQL 스키마 변경 이력 |
+| [`Dockerfile`](Dockerfile), [`nginx.conf`](nginx.conf) | 서버 이미지와 리버스 프록시 설정 |
+| [`performance_tests/`](performance_tests/) | Locust 부하 테스트 시나리오 |
 
-### 1. 가독성 평가 (OCR 및 자모 분석)
-- **사용 정보:** 글씨 이미지 데이터, 연습 목표 글자.
-- **평가 순서:**
-    1.  EasyOCR을 활용하여 이미지 내 텍스트 추출.
-    2.  추출 텍스트와 목표 글자의 완전 일치 여부 판별.
-    3.  불일치 시, 후보군 탐색을 위해 디코더를 변경하여 텍스트 재추출.
-    4.  유니코드 방식을 이용한 텍스트 및 목표 글자의 자모(초성, 중성, 종성) 분리.
-    5.  분리된 자모 리스트를 대조하여 일치하는 자모 개수 카운트.
-    6.  자모 일치 개수가 임계값(2개) 이상일 경우 가독성 통과, 미만일 경우 인식 실패 처리.
-- **판별 결과:** 완벽(Perfect), 유사 통과(Candidate Pass), 인식 실패(Fail).
+## 부하 테스트
 
-### 2. 글씨 전체 비율 평가
-- **사용 정보:** 글씨 전체 이미지.
-- **평가 순서:**
-    1.  글씨 전체 이미지에서 획이 있는 구역의 가로 및 세로 길이 계산.
-    2.  글씨 전체 이미지의 크기와 획이 있는 구역의 길이 비율 계산.
-    3.  계산한 길이 비율을 모델의 정답 값과 비교하여 `user_type`에 맞는 피드백 생성.
-- **감지 오류:** 글씨 크기(크거나 작음), 가로/세로 비율(너무 길거나 짧음) 오류.
+[`locustfile.py`](performance_tests/locustfile.py)는 프로필·통계·학습 단계 조회, 문장 생성, 글씨 평가를 섞어 호출합니다. 시나리오가 `user_id=1`, `step_id=1`을 사용하므로 해당 데이터가 있는 개발용 DB에서 실행합니다. 문장 생성 요청에는 Gemini 키가 필요합니다.
 
-### 3. 획순 및 방향 평가
-- **사용 정보:** 사용자가 쓴 획의 좌표 데이터 (시작/끝 좌표), 연습 목표 글자 및 자모별 획순 규칙.
-- **평가 순서:**
-    1.  목표 글자를 초성, 중성, 종성 단위로 분리.
-    2.  각 자모에 해당하는 정답 획 방향 및 순서 데이터 로드 (규칙 기반).
-    3.  사용자 입력 좌표의 벡터(dx, dy) 계산 및 정답 규칙과의 일치 여부 판별.
-    4.  방향이 틀린 경우, 해당 자모와 위치 정보를 오류 딕셔너리에 저장 후 피드백 메시지 생성.
-- **판별 결과:** 통과(Pass), 실패(Fail) (구체적인 오류 자모 명시).
+```sh
+python -m pip install locust
+locust -f performance_tests/locustfile.py --host http://localhost:8000
+```
 
-### 4. 음소 비율 평가
-- **사용 정보:** 글씨 전체 이미지, 글씨 획별 이미지, 글씨 음소별 획수 정답, 글씨의 정답, 사용자의 `user_type`.
-- **평가 순서:**
-    1.  글씨 전체 이미지 및 획별 이미지 불러오기.
-    2.  글씨 정답을 이용하여 평가하려는 글씨 타입의 정답 값 불러오기.
-    3.  글씨 전체 이미지에서 획이 있는 구역의 가로/세로 길이 및 면적 계산.
-    4.  글씨 획별 이미지에서 음소 각각의 가로/세로 길이 및 면적 계산.
-    5.  음소의 크기, 가로/세로 비율이 전체 글자 크기에 대해 올바른지 비율 계산.
-    6.  계산한 비율을 정답 값과 비교.
-    7.  비교 결과를 `user_type`에 맞도록 피드백 생성.
-- **감지 오류:** 음소의 크기(크거나 작음), 가로/세로 비율(너무 길거나 짧음) 오류.
-
----
-
-## ✨ 향후 개선 사항 (Future Improvements)
-
--   **`/api/user/stats/{id}` 페이지네이션 적용:** 현재 모든 통계 기록을 한 번에 가져오는 `/api/user/stats/{id}` 엔드포인트에 페이지네이션을 적용하여 응답 데이터 크기를 줄이고, 데이터베이스 부하를 경감하여 성능을 개선할 예정입니다.
-
----
-
-## 📁 주요 디렉토리 구조
-- `aiModel/`: EasyOCR 및 AI 평가 로직
-- `controller/`: API 엔드포인트 정의
-- `service/`: 비즈니스 로직 처리
-- `domain/`: SQLAlchemy ORM 모델 정의
-- `dto/`: 데이터 전송 객체 (Pydantic 모델)
-- `alembic/`: 데이터베이스 마이그레이션 도구
-- `performance_tests/`: Locust 성능 테스트 스크립
-
+기존 부하 테스트 기록에서는 가상 사용자 32명 기준으로 약 13~15 RPS, 요청 실패 0건, 안정 구간의 p95 응답 시간 약 1~1.5초를 기록했습니다.

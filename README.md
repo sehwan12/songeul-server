@@ -73,7 +73,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 ## 부하 테스트
 
-[`locustfile.py`](performance_tests/locustfile.py)는 프로필·통계·학습 단계 조회, 문장 생성, 글씨 평가를 섞어 호출합니다. 시나리오가 `user_id=1`, `step_id=1`을 사용하므로 해당 데이터가 있는 개발용 DB에서 실행합니다. 문장 생성 요청에는 Gemini 키가 필요합니다.
+[`locustfile.py`](performance_tests/locustfile.py)는 프로필·통계·학습 단계 조회, 문장 생성, 글씨 평가를 섞어 호출합니다. 시나리오가 `user_id=1`과 연습 글자가 나인 `step_id=1`을 사용하므로 해당 데이터가 있는 개발용 DB에서 실행합니다. 문장 생성 요청에는 Gemini 키가 필요합니다.
 
 ```sh
 python -m pip install locust

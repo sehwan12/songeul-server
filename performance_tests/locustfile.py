@@ -1,8 +1,27 @@
 import base64
+from io import BytesIO
+
+from PIL import Image, ImageDraw
 from locust import HttpUser, task, between
 
-# 1x1 Pixel Red Dot PNG Base64
-DUMMY_IMAGE_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+# Synthetic strokes for 나, the first exercise in the bundled backup.
+SAMPLE_STROKES = [((17, 20), (17, 48), (29, 48)), ((43, 13), (43, 59)), ((43, 32), (57, 32))]
+
+
+def encode_stroke(points):
+    image = Image.new("RGBA", (72, 72))
+    ImageDraw.Draw(image).line(points, fill="black", width=4)
+    with BytesIO() as output:
+        image.save(output, format="PNG")
+        return base64.b64encode(output.getvalue()).decode("ascii")
+
+
+SAMPLE_IMAGES = [encode_stroke(stroke) for stroke in SAMPLE_STROKES]
+SAMPLE_ENDPOINTS = [
+    {"x": point[0], "y": point[1]}
+    for stroke in SAMPLE_STROKES
+    for point in (stroke[0], stroke[-1])
+]
 
 class HandwritingUser(HttpUser):
     wait_time = between(1, 3)  # Users wait 1-3 seconds between tasks
@@ -42,28 +61,16 @@ class HandwritingUser(HttpUser):
     @task(3)
     def evaluate_handwriting(self):
         """Test the handwriting evaluation endpoint (Heavy Compute)."""
-        # Note: Ensure user_id=1 exists in your local DB or update this value.
+        # Use a development DB where user_id=1 exists and step_id=1 is 나.
         payload = {
             "user_id": 1,
             "step_id": 1,
-            "practice_text": "가",
-            "cell_images": {
-                "0": [DUMMY_IMAGE_B64]
-            },
-            "detailed_strokecounts": {
-                "0": [3]
-            },
-            "firstandlast_stroke": {
-                "0": [{ "x": 10.5, "y": 20.0 }, 
-                      { "x": 30.0, "y": 30.0 },
-                      {"x": 30.0, "y": 30.0},
-                      {"x": 40.0, "y": 40.0},
-                      {"x": 40.0, "y": 40.0},
-                      {"x": 50.0, "y": 50.0}
-                ]
-            },
-            "user_type": "CHILD"
+            "practice_text": "나",
+            "cell_images": {"0": SAMPLE_IMAGES},
+            "detailed_strokecounts": {"0": [1, 2, 0]},
+            "firstandlast_stroke": {"0": SAMPLE_ENDPOINTS},
+            "user_type": "CHILD",
         }
-        
+
         self.client.post("/api/step/evaluate", json=payload, name="/api/step/evaluate")
 

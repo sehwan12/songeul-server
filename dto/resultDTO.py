@@ -20,6 +20,7 @@ class ResultCreate(BaseModel):
 
 # Result 응답용 DTO - 글자별 상세 결과
 class CharacterResult(BaseModel):
+    cell_index: int
     original_text: str
     score: int
     stage: str

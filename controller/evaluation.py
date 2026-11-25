@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from database import get_db
+from domain.step import Step
 from dto.resultDTO import ResultCreate, ResultResponse
 from service.missionRecordService import clear_mission_record, create_mission_record, update_submission_time
 from service.resultService import create_result
@@ -9,6 +10,7 @@ from aiModel.utils.font_score_utils import evaluate_character
 from aiModel.utils.stroke_utils import count_jamo_matches, has_jongseung, extract_letters #1차 스테이지 보완
 from sqlalchemy.orm import Session
 from service.userService import get_user_by_id
+from service.handwritingSubmissionService import validate_submission
 
 router=APIRouter()
 
@@ -16,6 +18,24 @@ reader = None  # will be initialized lazily
 
 @router.post("/evaluate", response_model=ResultResponse)
 async def evaluate_handwriting(payload: ResultCreate,  db: Session = Depends(get_db)):
+    if get_user_by_id(db=db, user_id=payload.user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    step = db.get(Step, payload.step_id)
+    if step is None:
+        raise HTTPException(status_code=404, detail="Step not found")
+    try:
+        cells = validate_submission(payload, step.step_text)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    decoded_cells = {}
+    for cell_id in cells:
+        encoded = payload.cell_images[cell_id]
+        images = decode_base64_image_list(encoded)
+        if len(images) != len(encoded) or len({image.size for image in images}) != 1:
+            raise HTTPException(status_code=422, detail="획 이미지를 읽을 수 없습니다.")
+        decoded_cells[cell_id] = images
+
     global reader
     if reader is None:
         from aiModel import easyocr_mk2 as easyocr # 수정된 easyocr 모듈 임포트
@@ -27,34 +47,16 @@ async def evaluate_handwriting(payload: ResultCreate,  db: Session = Depends(get
             download_enabled=True,        # 불필요한 다운로드 방지
             verbose=False                  # 로깅 최소화
         )
-    current_user=get_user_by_id(db=db, user_id=payload.user_id)
-    if not current_user:
-        return {"error": "User not found"}, 404
-
-    #1)Mission Record 생성 
-    mission_record=create_mission_record(db, payload)
-    
     #2)모델 채점
     results = []  # 각 셀의 결과 저장용
     recognized_texts = ""  # 인식된 텍스트 저장용
     summary = ["", "", "", ""] # 각 단계별 틀린 글자 요약 저장용
 
 
-    # 각 글자자에 대해 반복
-    for cell_id in payload.cell_images.keys():
-        # 0. 데이터 추출
-        cell_images = payload.cell_images.get(cell_id)
-        if not cell_images:
-            continue  # 없으면 건너뜀
-
-
-        stroke_counts = payload.detailed_strokecounts.get(cell_id)
-        stroke_points = payload.firstandlast_stroke.get(cell_id)
-        practice_syllabus = payload.practice_text[int(cell_id)]
+    for cell_id, (practice_syllabus, stroke_counts) in cells.items():
+        images = decoded_cells[cell_id]
+        stroke_points = payload.firstandlast_stroke[cell_id]
         user_type = payload.user_type
-
-        # 1. 이미지 디코딩
-        images = decode_base64_image_list(cell_images)
 
         # 2. 병합
         img_bytes = merge_images(images)
@@ -89,6 +91,7 @@ async def evaluate_handwriting(payload: ResultCreate,  db: Session = Depends(get
         score_result = evaluate_character(passed_ocr, images, stroke_counts, stroke_points, practice_syllabus, user_type)
 
         results.append({
+            "cell_index": int(cell_id),
             "original_text": practice_syllabus,
             "score": score_result["score"],
             "stage": score_result["stage"],
@@ -120,7 +123,8 @@ async def evaluate_handwriting(payload: ResultCreate,  db: Session = Depends(get
     # 최종 피드백들
     final_feedbacks = [r["feedback"] for r in results]
 
-    # 3) Result 저장
+    # 채점이 완료된 제출만 기록합니다.
+    mission_record = create_mission_record(db, payload)
     create_result(
         db, 
         mission_record.mission_id,
